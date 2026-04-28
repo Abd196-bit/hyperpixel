@@ -54,3 +54,4 @@ A modern, deployable AI chat interface built with Flask and a local Llama model.
 - **Backend**: Flask with CORS support
 - **AI Model**: Llama.cpp for local inference
 - **Deployment**: Render-compatible with environment variable configuration# hyperpixel
+# hyperpixel
