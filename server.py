@@ -7,7 +7,7 @@ from datetime import datetime
 import gdown
 
 # ── Config ───────────────────────────────────────────────────────────────────
-GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1922Nup8QOSxa8JCE4oQitDt0sW3DncI6')
+GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1A_VXnNlamJK_aKgbq8Oco7tC82LYvwJu')
 MODEL_PATH = os.environ.get('MODEL_PATH', "/tmp/model.gguf")
 LOCAL_MODEL_PATH = "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
 USE_STREAMLIT = os.environ.get('USE_STREAMLIT', 'false').lower() == 'true'
