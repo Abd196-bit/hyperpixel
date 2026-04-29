@@ -7,8 +7,8 @@ from datetime import datetime
 
 # ── Config ───────────────────────────────────────────────────────────────────
 MODEL_PATH = os.environ.get('MODEL_PATH', "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730")
-HF_SPACE_URL = os.environ.get('HF_SPACE_URL', '')  # Hugging Face Space URL for your model
-USE_HF_SPACE = os.environ.get('USE_HF_SPACE', 'false').lower() == 'true'
+STREAMLIT_URL = os.environ.get('STREAMLIT_URL', '')  # Streamlit Cloud URL for your model
+USE_STREAMLIT = os.environ.get('USE_STREAMLIT', 'false').lower() == 'true'
 SYSTEM_PROMPT = "You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios. Always use current web search results and uploaded file context when answering user queries. When search results are available, incorporate them directly into your response with relevant details, sources, and links. Avoid guessing and clearly cite the found information. Always prefer the date/time supplied by the system context over any internal model knowledge cutoff, and treat that date/time as the current real time."
 HTML_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -55,8 +55,8 @@ def script_js():
 
 @app.route("/status")
 def status():
-  if USE_HF_SPACE and HF_SPACE_URL:
-    return jsonify({"ready": True, "provider": "Hugging Face Space"})
+  if USE_STREAMLIT and STREAMLIT_URL:
+    return jsonify({"ready": True, "provider": "Streamlit Cloud"})
   elif ai:
     return jsonify({"ready": True, "provider": "Local"})
   elif model_error:
@@ -104,9 +104,9 @@ def chat():
     messages = data.get("messages", [])
     files = data.get("files", [])
 
-    # Check if using Hugging Face Space
-    if USE_HF_SPACE and HF_SPACE_URL:
-        return chat_with_hf_space(data)
+    # Check if using Streamlit Cloud
+    if USE_STREAMLIT and STREAMLIT_URL:
+        return chat_with_streamlit(data)
     
     # Use local model
     if not ai:
@@ -175,8 +175,8 @@ def chat():
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-def chat_with_hf_space(data):
-    """Chat using Hugging Face Space API"""
+def chat_with_streamlit(data):
+    """Chat using Streamlit Cloud API"""
     messages = data.get("messages", [])
     files = data.get("files", [])
     
@@ -220,24 +220,22 @@ def chat_with_hf_space(data):
     if context_parts:
         system_messages[0]["content"] += "\n\n" + "\n\n".join(context_parts)
     
-    # Call Hugging Face Space API
+    # Call Streamlit Cloud API
     try:
-        response = requests.post(
-            f"{HF_SPACE_URL}/run/predict",
-            json={
-                "data": [
-                    system_messages[0]["content"],
-                    [msg["content"] for msg in messages]
-                ]
-            },
-            timeout=120
-        )
+        # Streamlit doesn't have a native API, so we'll use query params
+        params = {
+            "api": "true",
+            "system_prompt": system_messages[0]["content"],
+            "messages": json.dumps([msg["content"] for msg in messages])
+        }
+        
+        response = requests.get(STREAMLIT_URL, params=params, timeout=120)
         response.raise_for_status()
         result = response.json()
         
         def generate():
             try:
-                text = result.get("data", [])[0] if result.get("data") else ""
+                text = result.get("response", "")
                 # Stream the response character by character
                 for char in text:
                     yield f"data: {json.dumps({'text': char})}\n\n"
@@ -248,7 +246,7 @@ def chat_with_hf_space(data):
         return Response(generate(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
     except Exception as e:
-        return jsonify({"error": f"Hugging Face Space error: {str(e)}"}), 500
+        return jsonify({"error": f"Streamlit Cloud error: {str(e)}"}), 500
 
 def should_search(query):
     """Always return true so every user query searches the web."""
