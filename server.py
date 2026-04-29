@@ -7,6 +7,8 @@ from datetime import datetime
 
 # ── Config ───────────────────────────────────────────────────────────────────
 MODEL_PATH = os.environ.get('MODEL_PATH', "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730")
+HF_SPACE_URL = os.environ.get('HF_SPACE_URL', '')  # Hugging Face Space URL for your model
+USE_HF_SPACE = os.environ.get('USE_HF_SPACE', 'false').lower() == 'true'
 SYSTEM_PROMPT = "You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios. Always use current web search results and uploaded file context when answering user queries. When search results are available, incorporate them directly into your response with relevant details, sources, and links. Avoid guessing and clearly cite the found information. Always prefer the date/time supplied by the system context over any internal model knowledge cutoff, and treat that date/time as the current real time."
 HTML_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -53,12 +55,14 @@ def script_js():
 
 @app.route("/status")
 def status():
-    if ai:
-        return jsonify({"ready": True})
-    elif model_error:
-        return jsonify({"ready": False, "error": model_error})
-    else:
-        return jsonify({"ready": False, "loading": True})
+  if USE_HF_SPACE and HF_SPACE_URL:
+    return jsonify({"ready": True, "provider": "Hugging Face Space"})
+  elif ai:
+    return jsonify({"ready": True, "provider": "Local"})
+  elif model_error:
+    return jsonify({"ready": False, "error": model_error})
+  else:
+    return jsonify({"ready": False, "loading": True})
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
@@ -100,6 +104,11 @@ def chat():
     messages = data.get("messages", [])
     files = data.get("files", [])
 
+    # Check if using Hugging Face Space
+    if USE_HF_SPACE and HF_SPACE_URL:
+        return chat_with_hf_space(data)
+    
+    # Use local model
     if not ai:
         return jsonify({"error": "Model not loaded yet"}), 503
 
@@ -165,6 +174,81 @@ def chat():
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+def chat_with_hf_space(data):
+    """Chat using Hugging Face Space API"""
+    messages = data.get("messages", [])
+    files = data.get("files", [])
+    
+    # Perform web search
+    user_query = ""
+    for msg in reversed(messages):
+        if msg.get("role") == "user":
+            user_query = msg.get("content", "")
+            break
+    
+    search_results = []
+    if user_query:
+        try:
+            search_results = perform_search(user_query)
+        except Exception as e:
+            print(f"Search failed: {e}")
+    
+    # Build system prompt with context
+    system_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    context_parts = []
+    utc_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+    day_of_week = datetime.now().strftime("%A")
+    context_parts.append(f"Current time - UTC: {utc_time} | Local: {local_time} | Day: {day_of_week}")
+    
+    if search_results:
+        search_context = format_search_results(search_results, utc_time)
+        context_parts.append(f"Current web search results for context:\n{search_context}")
+    
+    if files:
+        file_context = format_file_content(files)
+        context_parts.append(f"Uploaded files for context:\n{file_context}")
+    
+    learned_facts = data.get('learned_facts', [])
+    if learned_facts:
+        facts_context = "User's learned facts (verified information):\n"
+        for fact in learned_facts[:10]:
+            facts_context += f"- {fact.get('fact', '')} (confidence: {fact.get('confidence', 0):.2f})\n"
+        context_parts.append(facts_context)
+    
+    if context_parts:
+        system_messages[0]["content"] += "\n\n" + "\n\n".join(context_parts)
+    
+    # Call Hugging Face Space API
+    try:
+        response = requests.post(
+            f"{HF_SPACE_URL}/run/predict",
+            json={
+                "data": [
+                    system_messages[0]["content"],
+                    [msg["content"] for msg in messages]
+                ]
+            },
+            timeout=120
+        )
+        response.raise_for_status()
+        result = response.json()
+        
+        def generate():
+            try:
+                text = result.get("data", [])[0] if result.get("data") else ""
+                # Stream the response character by character
+                for char in text:
+                    yield f"data: {json.dumps({'text': char})}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        
+        return Response(generate(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    except Exception as e:
+        return jsonify({"error": f"Hugging Face Space error: {str(e)}"}), 500
 
 def should_search(query):
     """Always return true so every user query searches the web."""
