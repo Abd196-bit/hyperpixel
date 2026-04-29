@@ -4,10 +4,12 @@ import json, os, threading
 import requests
 import werkzeug
 from datetime import datetime
+import gdown
 
 # ── Config ───────────────────────────────────────────────────────────────────
-MODEL_PATH = os.environ.get('MODEL_PATH', "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730")
-STREAMLIT_URL = os.environ.get('STREAMLIT_URL', '')  # Streamlit Cloud URL for your model
+GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1922Nup8QOSxa8JCE4oQitDt0sW3DncI6')
+MODEL_PATH = os.environ.get('MODEL_PATH', "/tmp/model.gguf")
+LOCAL_MODEL_PATH = "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
 USE_STREAMLIT = os.environ.get('USE_STREAMLIT', 'false').lower() == 'true'
 SYSTEM_PROMPT = "You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios. Always use current web search results and uploaded file context when answering user queries. When search results are available, incorporate them directly into your response with relevant details, sources, and links. Avoid guessing and clearly cite the found information. Always prefer the date/time supplied by the system context over any internal model knowledge cutoff, and treat that date/time as the current real time."
 HTML_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -22,11 +24,26 @@ model_error = None
 def load_model():
     global ai, model_error
     try:
+        # Use local model if it exists (for development)
+        if os.path.exists(LOCAL_MODEL_PATH):
+            model_file = LOCAL_MODEL_PATH
+            print("📁 Using local model")
+        # Download from Google Drive if model doesn't exist
+        elif not os.path.exists(MODEL_PATH):
+            print(f"📥 Downloading model from Google Drive (ID: {GOOGLE_DRIVE_FILE_ID})...")
+            os.makedirs(os.path.dirname(MODEL_PATH) or '.', exist_ok=True)
+            gdown.download(f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}", MODEL_PATH, quiet=False)
+            model_file = MODEL_PATH
+            print("✅ Model downloaded successfully")
+        else:
+            model_file = MODEL_PATH
+            print("📁 Using cached model")
+        
         from llama_cpp import Llama
         ai = Llama(
-            model_path=MODEL_PATH,
+            model_path=model_file,
             n_ctx=4096,
-            n_gpu_layers=29,
+            n_gpu_layers=0,  # No GPU on Render free tier
             verbose=False,
         )
         print("✅  Hyperpixel AI model loaded")
@@ -34,11 +51,8 @@ def load_model():
         model_error = str(e)
         print(f"❌  Model load failed: {e}")
 
-# Only load model if MODEL_PATH is set and file exists
-if MODEL_PATH and os.path.exists(MODEL_PATH):
-    threading.Thread(target=load_model, daemon=True).start()
-else:
-    print("⚠️  No model path provided or model file not found - running in API-only mode")
+# Load model in background thread
+threading.Thread(target=load_model, daemon=True).start()
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
@@ -55,9 +69,7 @@ def script_js():
 
 @app.route("/status")
 def status():
-  if USE_STREAMLIT and STREAMLIT_URL:
-    return jsonify({"ready": True, "provider": "Streamlit Cloud"})
-  elif ai:
+  if ai:
     return jsonify({"ready": True, "provider": "Local"})
   elif model_error:
     return jsonify({"ready": False, "error": model_error})
@@ -104,10 +116,6 @@ def chat():
     messages = data.get("messages", [])
     files = data.get("files", [])
 
-    # Check if using Streamlit Cloud
-    if USE_STREAMLIT and STREAMLIT_URL:
-        return chat_with_streamlit(data)
-    
     # Use local model
     if not ai:
         return jsonify({"error": "Model not loaded yet"}), 503
@@ -174,79 +182,6 @@ def chat():
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-
-def chat_with_streamlit(data):
-    """Chat using Streamlit Cloud API"""
-    messages = data.get("messages", [])
-    files = data.get("files", [])
-    
-    # Perform web search
-    user_query = ""
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            user_query = msg.get("content", "")
-            break
-    
-    search_results = []
-    if user_query:
-        try:
-            search_results = perform_search(user_query)
-        except Exception as e:
-            print(f"Search failed: {e}")
-    
-    # Build system prompt with context
-    system_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    context_parts = []
-    utc_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
-    day_of_week = datetime.now().strftime("%A")
-    context_parts.append(f"Current time - UTC: {utc_time} | Local: {local_time} | Day: {day_of_week}")
-    
-    if search_results:
-        search_context = format_search_results(search_results, utc_time)
-        context_parts.append(f"Current web search results for context:\n{search_context}")
-    
-    if files:
-        file_context = format_file_content(files)
-        context_parts.append(f"Uploaded files for context:\n{file_context}")
-    
-    learned_facts = data.get('learned_facts', [])
-    if learned_facts:
-        facts_context = "User's learned facts (verified information):\n"
-        for fact in learned_facts[:10]:
-            facts_context += f"- {fact.get('fact', '')} (confidence: {fact.get('confidence', 0):.2f})\n"
-        context_parts.append(facts_context)
-    
-    if context_parts:
-        system_messages[0]["content"] += "\n\n" + "\n\n".join(context_parts)
-    
-    # Call Streamlit Cloud API
-    try:
-        # Streamlit doesn't have a native API, so we'll use query params
-        params = {
-            "api": "true",
-            "system_prompt": system_messages[0]["content"],
-            "messages": json.dumps([msg["content"] for msg in messages])
-        }
-        
-        response = requests.get(STREAMLIT_URL, params=params, timeout=120)
-        response.raise_for_status()
-        result = response.json()
-        
-        def generate():
-            try:
-                text = result.get("response", "")
-                # Stream the response character by character
-                for char in text:
-                    yield f"data: {json.dumps({'text': char})}\n\n"
-                yield "data: [DONE]\n\n"
-            except Exception as e:
-                yield f"data: {json.dumps({'error': str(e)})}\n\n"
-        
-        return Response(generate(), mimetype="text/event-stream",
-                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
-    except Exception as e:
-        return jsonify({"error": f"Streamlit Cloud error: {str(e)}"}), 500
 
 def should_search(query):
     """Always return true so every user query searches the web."""
