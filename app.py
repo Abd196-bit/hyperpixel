@@ -1,10 +1,31 @@
 import streamlit as st
 from llama_cpp import Llama
 import json
+import os
+from huggingface_hub import hf_hub_download
 
-# Load your model
-model_path = "models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
-llm = Llama(model_path=model_path, n_ctx=4096, verbose=False)
+# Google Drive file ID (replace with your actual file ID)
+GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1922Nup8QOSxa8JCE4oQitDt0sW3DncI6')
+
+# Download model from Google Drive or use local path
+@st.cache_resource
+def load_model():
+    # Try to use local path first
+    local_path = "models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
+    if os.path.exists(local_path):
+        return Llama(model_path=local_path, n_ctx=4096, verbose=False)
+    
+    # Download from Google Drive if file ID is provided
+    if GOOGLE_DRIVE_FILE_ID:
+        import gdown
+        st.write("Downloading model from Google Drive...")
+        model_file = "sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
+        gdown.download(f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}", model_file, quiet=False)
+        return Llama(model_path=model_file, n_ctx=4096, verbose=False)
+    
+    raise ValueError("Model not found locally and no Google Drive file ID provided")
+
+llm = load_model()
 
 def generate(system_prompt, messages):
     """Generate response from the model"""
