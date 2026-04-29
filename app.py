@@ -2,7 +2,6 @@ import streamlit as st
 from llama_cpp import Llama
 import json
 import os
-from huggingface_hub import hf_hub_download
 
 # Google Drive file ID (replace with your actual file ID)
 GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1922Nup8QOSxa8JCE4oQitDt0sW3DncI6')
