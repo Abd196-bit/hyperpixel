@@ -2,6 +2,7 @@ import streamlit as st
 from llama_cpp import Llama
 import json
 import os
+import gdown
 
 # Google Drive file ID (replace with your actual file ID)
 GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1922Nup8QOSxa8JCE4oQitDt0sW3DncI6')
@@ -16,7 +17,6 @@ def load_model():
     
     # Download from Google Drive if file ID is provided
     if GOOGLE_DRIVE_FILE_ID:
-        import gdown
         st.write("Downloading model from Google Drive...")
         model_file = "sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
         gdown.download(f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}", model_file, quiet=False)
