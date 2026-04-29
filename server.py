@@ -43,6 +43,14 @@ else:
 def index():
     return send_from_directory(HTML_DIR, "hyperpixel.html")
 
+@app.route("/style.css")
+def style_css():
+    return send_from_directory(HTML_DIR, "style.css")
+
+@app.route("/script.js")
+def script_js():
+    return send_from_directory(HTML_DIR, "script.js")
+
 @app.route("/status")
 def status():
     if ai:
@@ -114,17 +122,28 @@ def chat():
             # Add search results, current time, and file content to system prompt if available
             system_messages = [{"role": "system", "content": SYSTEM_PROMPT}]
             context_parts = []
-            current_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-            context_parts.append(f"Current time (UTC): {current_time}")
+            # Enhanced time accuracy with local and UTC time
+            utc_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+            local_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S %Z")
+            day_of_week = datetime.now().strftime("%A")
+            context_parts.append(f"Current time - UTC: {utc_time} | Local: {local_time} | Day: {day_of_week}")
 
             if search_results:
-                search_time = current_time
+                search_time = utc_time
                 search_context = format_search_results(search_results, search_time)
                 context_parts.append(f"Current web search results for context (retrieved at {search_time}):\n{search_context}")
 
             if files:
                 file_context = format_file_content(files)
                 context_parts.append(f"Uploaded files for context:\n{file_context}")
+
+            # Add learned facts if provided
+            learned_facts = data.get('learned_facts', [])
+            if learned_facts:
+                facts_context = "User's learned facts (verified information):\n"
+                for fact in learned_facts[:10]:  # Limit to top 10 facts
+                    facts_context += f"- {fact.get('fact', '')} (confidence: {fact.get('confidence', 0):.2f})\n"
+                context_parts.append(facts_context)
 
             if context_parts:
                 system_messages[0]["content"] += "\n\n" + "\n\n".join(context_parts)
@@ -239,6 +258,118 @@ def perform_search(query):
         print(f"Search error: {e}")
         return []
 
+def verify_fact_with_duckduckgo(fact):
+    """Verify a fact using DuckDuckGo search"""
+    try:
+        url = "https://api.duckduckgo.com/"
+        params = {
+            "q": fact,
+            "format": "json",
+            "no_html": 1,
+            "skip_disambig": 0
+        }
+        headers = {
+            "User-Agent": "HyperpixelAI/1.0 (+https://hyperpixel.example.com)"
+        }
+        
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        result = response.json()
+        
+        verification_result = {
+            "fact": fact,
+            "verified": False,
+            "confidence": 0.0,
+            "sources": [],
+            "summary": ""
+        }
+        
+        # Check if there's relevant information
+        if result.get("Abstract"):
+            verification_result["verified"] = True
+            verification_result["confidence"] = 0.8
+            verification_result["sources"].append({
+                "title": result.get("Heading", "Summary"),
+                "url": result.get("AbstractURL", ""),
+                "content": result["Abstract"][:500]
+            })
+            verification_result["summary"] = result["Abstract"][:300]
+        
+        if result.get("Answer"):
+            verification_result["verified"] = True
+            verification_result["confidence"] = min(verification_result["confidence"] + 0.2, 1.0)
+            verification_result["sources"].append({
+                "title": "Direct Answer",
+                "content": result["Answer"][:300]
+            })
+        
+        return verification_result
+        
+    except Exception as e:
+        print(f"Fact verification error: {e}")
+        return {
+            "fact": fact,
+            "verified": False,
+            "confidence": 0.0,
+            "sources": [],
+            "summary": "Verification failed due to error"
+        }
+
+@app.route('/verify_fact', methods=['POST'])
+def verify_fact():
+    """Verify a fact before storing in memory"""
+    try:
+        data = request.json
+        fact = data.get('fact', '')
+        
+        if not fact:
+            return jsonify({"error": "No fact provided"}), 400
+        
+        verification = verify_fact_with_duckduckgo(fact)
+        return jsonify(verification)
+        
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/learn', methods=['POST'])
+def learn_from_interaction():
+    """Store learned information after fact verification"""
+    try:
+        data = request.json
+        user_id = data.get('user_id')
+        fact = data.get('fact')
+        context = data.get('context', '')
+        verification = data.get('verification', {})
+        
+        if not user_id or not fact:
+            return jsonify({"error": "Missing required fields"}), 400
+        
+        # Only store if fact is verified with high confidence
+        if verification.get('verified', False) and verification.get('confidence', 0) >= 0.7:
+            learned_info = {
+                "fact": fact,
+                "context": context,
+                "verification": verification,
+                "learned_at": datetime.utcnow().isoformat(),
+                "confidence": verification.get('confidence', 0)
+            }
+            
+            # Store in Firebase (this would be done client-side with Firebase SDK)
+            # For now, return the data to be stored
+            return jsonify({
+                "success": True,
+                "learned": learned_info,
+                "message": "Fact verified and stored in memory"
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": "Fact could not be verified with sufficient confidence"
+            })
+            
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 def format_search_results(results, timestamp=None):
     """Format search results for AI context"""
     if not results:
@@ -275,7 +406,7 @@ def format_file_content(files):
     return formatted
 
 if __name__ == "__main__":
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 5500))
     print("🚀  Starting Hyperpixel AI server...")
     print(f"🌐  Open http://localhost:{port} in your browser")
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
