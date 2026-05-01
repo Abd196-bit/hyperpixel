@@ -110,13 +110,67 @@ def upload_file():
     except Exception as e:
         return jsonify({"error": f"Failed to process file: {str(e)}"}), 500
 
+def detect_image_request(text):
+    """Detect if user is asking for an image generation"""
+    import re
+    image_keywords = [
+        r'generate\s+(?:an?\s+)?image',
+        r'create\s+(?:an?\s+)?image',
+        r'make\s+(?:an?\s+)?image',
+        r'draw\s+(?:an?\s+)?',
+        r'show\s+me\s+(?:an?\s+)?(?:picture|image|photo)',
+        r'can\s+you\s+(?:draw|generate|create)\s+(?:an?\s+)?image',
+        r'visualize',
+        r'illustrate',
+        r'render\s+(?:an?\s+)?image',
+        r'produce\s+(?:an?\s+)?image'
+    ]
+    
+    text_lower = text.lower()
+    for pattern in image_keywords:
+        if re.search(pattern, text_lower):
+            # Extract the image description (everything after the keyword)
+            match = re.search(pattern + r'\s+(?:of\s+)?(.+)', text_lower, re.IGNORECASE)
+            if match:
+                return match.group(1).strip()
+            # If no specific pattern match, return the whole text minus the keyword
+            return re.sub(pattern, '', text_lower, flags=re.IGNORECASE).strip()
+    return None
+
 @app.route("/chat", methods=["POST"])
 def chat():
     data = request.json
     messages = data.get("messages", [])
     files = data.get("files", [])
 
-    # Use local model
+    # Check if user is requesting an image
+    user_message = messages[-1].get("content", "") if messages else ""
+    image_prompt = detect_image_request(user_message)
+    
+    if image_prompt and len(image_prompt) > 3:
+        # User wants an image - generate it
+        def generate_image_response():
+            try:
+                yield f"data: {json.dumps({'text': "I'll generate that image for you...\\n\\n"})}\n\n"
+                
+                # Call Pollinations AI
+                encoded_prompt = requests.utils.quote(image_prompt[:500])  # Limit prompt length
+                image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={hash(image_prompt) % 10000}"
+                
+                response = requests.get(image_url, timeout=60)
+                response.raise_for_status()
+                image_base64 = base64.b64encode(response.content).decode('utf-8')
+                
+                yield f"data: {json.dumps({'image': f'data:image/png;base64,{image_base64}', 'prompt': image_prompt})}\n\n"
+                yield "data: [DONE]\n\n"
+            except Exception as e:
+                yield f"data: {json.dumps({'text': f"Sorry, I couldn't generate that image: {str(e)}"})}\n\n"
+                yield "data: [DONE]\n\n"
+        
+        return Response(generate_image_response(), mimetype="text/event-stream",
+                        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+    # Use local model for text response
     if not ai:
         return jsonify({"error": "Model not loaded yet"}), 503
 

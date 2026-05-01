@@ -694,6 +694,17 @@ async function sendMessage() {
             content.appendChild(cursor);
             scrollToBottom();
           }
+          if (chunk.image) {
+            // Image generation detected
+            cursor.remove();
+            content.innerHTML = formatText(fullText) + `
+              <div style="margin-top: 12px;">
+                <img src="${chunk.image}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
+                <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(chunk.prompt || 'image')}</div>
+              </div>`;
+            fullText += `\n\n[Generated image: ${chunk.prompt || 'image'}]`;
+            scrollToBottom();
+          }
         } catch (_) {}
       }
     }
