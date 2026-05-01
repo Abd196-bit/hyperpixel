@@ -157,7 +157,7 @@ def chat():
                 encoded_prompt = requests.utils.quote(image_prompt[:500])  # Limit prompt length
                 image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width=1024&height=1024&nologo=true&seed={hash(image_prompt) % 10000}"
                 
-                response = requests.get(image_url, timeout=60)
+                response = requests.get(image_url, timeout=180)
                 response.raise_for_status()
                 image_base64 = base64.b64encode(response.content).decode('utf-8')
                 
