@@ -11,7 +11,20 @@ GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1A_VXnNlamJK_aKgb
 MODEL_PATH = os.environ.get('MODEL_PATH', "/tmp/model.gguf")
 LOCAL_MODEL_PATH = "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
 USE_STREAMLIT = os.environ.get('USE_STREAMLIT', 'false').lower() == 'true'
-SYSTEM_PROMPT = "You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios. Always use current web search results and uploaded file context when answering user queries. When search results are available, incorporate them directly into your response with relevant details, sources, and links. Avoid guessing and clearly cite the found information. Always prefer the date/time supplied by the system context over any internal model knowledge cutoff, and treat that date/time as the current real time."
+SYSTEM_PROMPT = """You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios.
+
+CRITICAL INSTRUCTIONS:
+1. Always use current web search results and uploaded file context when answering user queries.
+2. When a user uploads files, you MUST analyze them thoroughly and incorporate their content into your response.
+3. For code files: identify bugs, suggest improvements, explain what the code does, and provide refactored versions if needed.
+4. For documents: summarize key points, extract important information, and answer questions about the content.
+5. For images: describe what you see in detail.
+6. For data files (CSV, JSON, etc.): analyze patterns, provide statistics, and suggest insights.
+7. When search results are available, incorporate them directly with relevant details, sources, and links.
+8. Always prefer the date/time supplied by the system context over any internal model knowledge cutoff.
+9. Avoid guessing and clearly cite the information you use.
+
+When files are uploaded, start your response by acknowledging what files were received, then provide your detailed analysis."""
 HTML_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = Flask(__name__, static_folder=HTML_DIR)
@@ -96,16 +109,41 @@ def upload_file():
 
     # Read file content for processing
     try:
-        if filename.lower().endswith(('.txt', '.md', '.py', '.js', '.html', '.css', '.json')):
-            with open(file_path, 'r', encoding='utf-8') as f:
+        file_size = os.path.getsize(file_path)
+        content = ""
+        file_type = "binary"
+        
+        # Text files
+        if filename.lower().endswith(('.txt', '.md', '.py', '.js', '.html', '.css', '.json', '.xml', '.yaml', '.yml', '.csv', '.ts', '.jsx', '.tsx', '.vue', '.php', '.rb', '.java', '.c', '.cpp', '.h', '.go', '.rs', '.swift', '.kt')):
+            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
+                file_type = "code/text"
+                if filename.lower().endswith('.csv'):
+                    file_type = "csv"
+                elif filename.lower().endswith(('.py', '.js', '.html', '.css', '.json')):
+                    file_type = "code"
+        # Images
+        elif filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg')):
+            content = f"[Image file: {filename}, size: {file_size} bytes. Image analysis available.]"
+            file_type = "image"
+        # Documents
+        elif filename.lower().endswith(('.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx')):
+            content = f"[Document file: {filename}, size: {file_size} bytes. Document content extraction not available in basic mode.]"
+            file_type = "document"
+        # Archives
+        elif filename.lower().endswith(('.zip', '.tar', '.gz', '.rar', '.7z')):
+            content = f"[Archive file: {filename}, size: {file_size} bytes]"
+            file_type = "archive"
         else:
-            content = f"File uploaded: {filename} ({len(file.read())} bytes)"
+            content = f"File uploaded: {filename} (size: {file_size} bytes, type: {file_type})"
+            file_type = "other"
 
         return jsonify({
             "filename": filename,
             "content": content[:5000],  # Limit content size
-            "message": f"File '{filename}' uploaded successfully"
+            "file_type": file_type,
+            "file_size": file_size,
+            "message": f"File '{filename}' uploaded successfully ({file_type})"
         })
     except Exception as e:
         return jsonify({"error": f"Failed to process file: {str(e)}"}), 500
@@ -465,15 +503,37 @@ def format_search_results(results, timestamp=None):
     return formatted
 
 def format_file_content(files):
-    """Format uploaded file content for AI context"""
+    """Format uploaded file content for AI context with enhanced analysis support"""
     if not files:
         return ""
 
-    formatted = ""
-    for file_info in files:
-        formatted += f"File: {file_info['filename']}\n"
-        formatted += f"Content:\n{file_info['content']}\n\n"
-
+    formatted = "UPLOADED FILES FOR ANALYSIS:\n"
+    formatted += "=" * 50 + "\n\n"
+    
+    for i, file_info in enumerate(files, 1):
+        filename = file_info.get('filename', f'file_{i}')
+        content = file_info.get('content', '')
+        file_type = file_info.get('file_type', 'unknown')
+        file_size = file_info.get('file_size', 0)
+        
+        formatted += f"[{i}] FILE: {filename}\n"
+        formatted += f"    Type: {file_type}\n"
+        formatted += f"    Size: {file_size} bytes\n"
+        formatted += f"    Content:\n"
+        
+        # Add content with proper indentation
+        content_lines = content.split('\n') if content else []
+        for line in content_lines[:100]:  # Limit to 100 lines per file
+            formatted += f"    {line}\n"
+        
+        if len(content_lines) > 100:
+            formatted += f"    ... ({len(content_lines) - 100} more lines)\n"
+        
+        formatted += "\n" + "-" * 50 + "\n\n"
+    
+    formatted += "END OF UPLOADED FILES\n"
+    formatted += "Please analyze these files and provide insights, suggestions, or answer questions about them."
+    
     return formatted
 
 @app.route('/generate-image', methods=['POST'])
