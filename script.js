@@ -557,7 +557,16 @@ function saveEdit(btn, originalText) {
       msgs.innerHTML = "";
       currentChat.messages.forEach(m => {
         if (m.role === "user") appendUserBubble(m.content);
-        else appendAIBubble(m.content);
+        else {
+          const { row, content } = appendAIBubble(m.content);
+          if (m.image) {
+            content.innerHTML += `
+              <div style="margin-top: 12px;">
+                <img src="${m.image}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
+                <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(m.imagePrompt || 'image')}</div>
+              </div>`;
+          }
+        }
       });
     }
   } else {
@@ -610,12 +619,21 @@ function renderHistory() {
 
 function loadChat(i) {
   currentChat = chats[i];
-  history = currentChat.messages.map(m => ({ role: m.role, content: m.content }));
+  history = currentChat.messages.map(m => ({ role: m.role, content: m.content, image: m.image, imagePrompt: m.imagePrompt }));
   const msgs = document.getElementById("messages");
   msgs.innerHTML = "";
   currentChat.messages.forEach(m => {
     if (m.role === "user") appendUserBubble(m.content);
-    else appendAIBubble(m.content);
+    else {
+      const { row, content } = appendAIBubble(m.content);
+      if (m.image) {
+        content.innerHTML += `
+          <div style="margin-top: 12px;">
+            <img src="${m.image}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
+            <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(m.imagePrompt || 'image')}</div>
+          </div>`;
+      }
+    }
   });
   document.querySelector(".topbar-title").textContent = currentChat.title;
 }
@@ -697,13 +715,30 @@ async function sendMessage() {
           if (chunk.image) {
             // Image generation detected
             cursor.remove();
-            content.innerHTML = formatText(fullText) + `
+            const imageHtml = `
               <div style="margin-top: 12px;">
                 <img src="${chunk.image}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
                 <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(chunk.prompt || 'image')}</div>
               </div>`;
-            fullText += `\n\n[Generated image: ${chunk.prompt || 'image'}]`;
+            content.innerHTML = formatText(fullText) + imageHtml;
             scrollToBottom();
+            // Store message with image data
+            const imageMessage = {
+              role: "assistant",
+              content: fullText || "Here's your generated image:",
+              image: chunk.image,
+              imagePrompt: chunk.prompt
+            };
+            history.push(imageMessage);
+            currentChat.messages.push(imageMessage);
+            document.getElementById("topbar-status").textContent = "Image ready";
+            if (currentUser) {
+              await saveChatToDatabase();
+            }
+            isStreaming = false;
+            document.getElementById("send-btn").disabled = false;
+            input.focus();
+            return; // Exit early since we've handled the complete message
           }
         } catch (_) {}
       }
