@@ -557,16 +557,7 @@ function saveEdit(btn, originalText) {
       msgs.innerHTML = "";
       currentChat.messages.forEach(m => {
         if (m.role === "user") appendUserBubble(m.content);
-        else {
-          const { row, content } = appendAIBubble(m.content);
-          if (m.image) {
-            content.innerHTML += `
-              <div style="margin-top: 12px;">
-                <img src="${m.image}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
-                <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(m.imagePrompt || 'image')}</div>
-              </div>`;
-          }
-        }
+        else appendAIBubble(m.content, m.image, m.imagePrompt);
       });
     }
   } else {
@@ -624,16 +615,7 @@ function loadChat(i) {
   msgs.innerHTML = "";
   currentChat.messages.forEach(m => {
     if (m.role === "user") appendUserBubble(m.content);
-    else {
-      const { row, content } = appendAIBubble(m.content);
-      if (m.image) {
-        content.innerHTML += `
-          <div style="margin-top: 12px;">
-            <img src="${m.image}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
-            <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(m.imagePrompt || 'image')}</div>
-          </div>`;
-      }
-    }
+    else appendAIBubble(m.content, m.image, m.imagePrompt);
   });
   document.querySelector(".topbar-title").textContent = currentChat.title;
 }
@@ -807,13 +789,22 @@ async function generateImage() {
       throw new Error(data.error);
     }
 
-    // Display the generated image
-    content.innerHTML = `<div style="margin-bottom: 8px;">Here's your generated image:</div>
-      <img src="${data.image_data}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
-      <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Prompt: ${escapeHtml(data.prompt)}</div>`;
+    // Display the generated image with download button
+    content.innerHTML = formatText("Here's your generated image:") + `
+      <div style="margin-top: 12px;">
+        <img src="${data.image_data}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
+        <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Prompt: ${escapeHtml(data.prompt)}</div>
+        <button class="download-btn" onclick="downloadImage('${data.image_data}', '${data.prompt.replace(/[^a-z0-9]/gi, '_').substring(0, 50)}.png')" title="Download image">💾 Download Image</button>
+      </div>`;
 
-    history.push({ role: "assistant", content: `[Generated image: ${data.prompt}]` });
-    currentChat.messages.push({ role: "assistant", content: `[Generated image: ${data.prompt}]` });
+    const imageMessage = {
+      role: "assistant",
+      content: "Here's your generated image:",
+      image: data.image_data,
+      imagePrompt: data.prompt
+    };
+    history.push(imageMessage);
+    currentChat.messages.push(imageMessage);
     document.getElementById("topbar-status").textContent = "Image ready";
 
     if (currentUser) {
@@ -838,13 +829,13 @@ function appendUserBubble(text) {
   row.className = "message-row user";
   const isSearch = text.startsWith('Search: ');
   const displayText = isSearch ? text : text;
-  row.innerHTML = `<div class="bubble">${escapeHtml(displayText)}<button class="edit-btn" onclick="editMessage(this, '${displayText.replace(/'/g, "\\'")}')">Edit</button></div>`;
+  row.innerHTML = `<div class="bubble">${escapeHtml(displayText)}<button class="edit-btn" onclick="editMessage(this, '${displayText.replace(/'/g, "\\'")}')">Edit</button><button style="position:absolute;top:-8px;right:16px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:1px solid var(--border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--text-muted);opacity:0;transition:all 0.15s;padding:0;" onmouseover="this.style.opacity='1'" onmouseout="this.style.opacity='0'" onclick="downloadText('${displayText.replace(/'/g, "\\'")}', 'message.txt')" title="Download">💾</button></div>`;
   msgs.appendChild(row);
   scrollToBottom();
   return row;
 }
 
-function appendAIBubble(text) {
+function appendAIBubble(text, imageData = null, imagePrompt = null) {
   const msgs = document.getElementById("messages");
   const row = document.createElement("div");
   row.className = "ai-row";
@@ -853,10 +844,50 @@ function appendAIBubble(text) {
     <div class="ai-content">
       <div class="ai-name">Hyperpixel</div>
       <div class="ai-text">${formatText(text)}</div>
+      ${imageData ? `
+      <div style="margin-top: 12px;">
+        <img src="${imageData}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
+        <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Generated: ${escapeHtml(imagePrompt || 'image')}</div>
+        <button class="download-btn" onclick="downloadImage('${imageData}', '${(imagePrompt || 'image').replace(/[^a-z0-9]/gi, '_').substring(0, 50)}.png')" title="Download image">💾 Download Image</button>
+      </div>` : ''}
     </div>`;
   msgs.appendChild(row);
   scrollToBottom();
   return { row, content: row.querySelector(".ai-text") };
+}
+
+// ── Download helpers ───────────────────────────────────────────────────────
+function downloadText(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function downloadImage(dataUrl, filename) {
+  const a = document.createElement('a');
+  a.href = dataUrl;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+function downloadFile(content, filename, mimeType = 'text/plain') {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function formatText(text) {
