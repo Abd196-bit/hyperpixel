@@ -84,8 +84,8 @@ def start_ollama_server():
     global ollama_ready
     
     # Set environment variable for Ollama models path
+    os.environ['OLLAMA_MODELS'] = OLLAMA_MODELS_PATH
     env = os.environ.copy()
-    env['OLLAMA_MODELS'] = OLLAMA_MODELS_PATH
     
     try:
         # Check if Ollama is already running
