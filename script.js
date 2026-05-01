@@ -61,6 +61,10 @@ function showChatPage() {
   hideAllPages();
   document.getElementById('chat-page').classList.add('active', 'fade-in');
   document.getElementById('chat-page').style.display = 'flex';
+  // Load available models when entering chat
+  loadAvailableModels();
+  // Start status checking
+  checkStatus();
 }
 
 function hideAllPages() {
@@ -409,9 +413,15 @@ async function checkStatus() {
     const d = await r.json();
     if (d.ready) {
       document.getElementById("status-dot").classList.remove("loading");
-      document.getElementById("status-text").textContent = "Hyperpixel 1.0";
-      document.getElementById("topbar-status").textContent = "Model ready";
+      const modelName = d.model || "Hyperpixel";
+      const modelSize = d.model_size || "";
+      document.getElementById("status-text").textContent = modelSize ? `${modelName} ${modelSize}` : modelName;
+      document.getElementById("topbar-status").textContent = `Model ready (${modelName})`;
       document.getElementById("send-btn").disabled = false;
+      // Update model selector if provided
+      if (d.model_id) {
+        document.getElementById("model-select").value = d.model_id;
+      }
       return;
     }
     if (d.error) {
@@ -421,6 +431,58 @@ async function checkStatus() {
     }
   } catch (_) {}
   setTimeout(checkStatus, 1500);
+}
+
+// ── Model Switching ───────────────────────────────────────────────────────
+async function switchModel(modelId) {
+  try {
+    document.getElementById("topbar-status").textContent = "Switching model...";
+    document.getElementById("status-dot").classList.add("loading");
+    document.getElementById("send-btn").disabled = true;
+    
+    const response = await fetch(API + "/switch-model", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model_id: modelId })
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showToast(`Switched to ${data.model.name}`);
+      // Refresh status to update UI
+      await checkStatus();
+    } else {
+      showToast("Failed to switch model: " + (data.error || "Unknown error"));
+      // Revert selector to current model
+      const statusResp = await fetch(API + "/status");
+      const statusData = await statusResp.json();
+      if (statusData.model_id) {
+        document.getElementById("model-select").value = statusData.model_id;
+      }
+    }
+  } catch (err) {
+    showToast("Error switching model: " + err.message);
+    // Refresh to get current state
+    await checkStatus();
+  }
+}
+
+// ── Load available models ────────────────────────────────────────────────────
+async function loadAvailableModels() {
+  try {
+    const response = await fetch(API + "/models");
+    const data = await response.json();
+    
+    if (data.models) {
+      const select = document.getElementById("model-select");
+      select.innerHTML = data.models.map(m => 
+        `<option value="${m.id}" ${m.id === data.current_model ? 'selected' : ''}>${m.name} (${m.size})</option>`
+      ).join('');
+    }
+  } catch (err) {
+    console.error("Failed to load models:", err);
+  }
 }
 
 function updateLiveClock() {

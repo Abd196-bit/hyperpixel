@@ -77,6 +77,13 @@
       <div class="pulse loading" id="status-dot"></div>
       <span id="status-text">Loading model…</span>
     </div>
+    <div class="model-selector">
+      <select id="model-select" onchange="switchModel(this.value)">
+        <option value="hyperpixel">Hyperpixel (8B)</option>
+        <option value="minipixel">Minipixel (2B)</option>
+        <option value="minipixel2">Minipixel2 (3B)</option>
+      </select>
+    </div>
   </div>
 </aside>
 

@@ -1969,3 +1969,30 @@ body {
   margin-left: auto;
   margin-right: auto;
 }
+
+/* Model selector dropdown */
+.model-selector {
+  margin-top: 8px;
+}
+
+.model-selector select {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.model-selector select:hover {
+  border-color: var(--accent-soft);
+  background: var(--surface-2);
+}
+
+.model-selector select:focus {
+  outline: none;
+  border-color: var(--accent);
+}

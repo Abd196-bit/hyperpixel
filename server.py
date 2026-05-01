@@ -11,6 +11,38 @@ GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1A_VXnNlamJK_aKgb
 MODEL_PATH = os.environ.get('MODEL_PATH', "/tmp/model.gguf")
 LOCAL_MODEL_PATH = "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
 USE_STREAMLIT = os.environ.get('USE_STREAMLIT', 'false').lower() == 'true'
+
+# ── Model Configuration ───────────────────────────────────────────────────────
+AVAILABLE_MODELS = {
+    "hyperpixel": {
+        "name": "Hyperpixel",
+        "description": "Main 8B parameter model - best for complex tasks",
+        "path": LOCAL_MODEL_PATH if os.path.exists(LOCAL_MODEL_PATH) else MODEL_PATH,
+        "context_length": 4096,
+        "size": "8B"
+    },
+    "minipixel": {
+        "name": "Minipixel",
+        "description": "Fast 2B parameter model - quick responses",
+        "path": os.environ.get('MINIPIXEL_PATH', "/tmp/minipixel.gguf"),
+        "download_url": os.environ.get('MINIPIXEL_URL', ""),
+        "context_length": 4096,
+        "size": "2B"
+    },
+    "minipixel2": {
+        "name": "Minipixel2",
+        "description": "Balanced 3B parameter model - good for most tasks",
+        "path": os.environ.get('MINIPIXEL2_PATH', "/tmp/minipixel2.gguf"),
+        "download_url": os.environ.get('MINIPIXEL2_URL', ""),
+        "context_length": 4096,
+        "size": "3B"
+    }
+}
+
+current_model_id = "hyperpixel"
+ai_instances = {}
+ai = None
+model_error = None
 SYSTEM_PROMPT = """You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios.
 
 CRITICAL INSTRUCTIONS:
@@ -30,42 +62,94 @@ HTML_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=HTML_DIR)
 CORS(app)
 
-# ── Load model once at startup ────────────────────────────────────────────────
-ai = None
-model_error = None
-
-def load_model():
-    global ai, model_error
+# ── Model Management ───────────────────────────────────────────────────────────
+def load_model_by_id(model_id):
+    """Load a specific model by ID"""
+    global ai, model_error, current_model_id
+    
+    if model_id not in AVAILABLE_MODELS:
+        return False, f"Model '{model_id}' not found"
+    
+    model_config = AVAILABLE_MODELS[model_id]
+    model_path = model_config["path"]
+    
+    # If model already loaded, return success
+    if model_id in ai_instances:
+        ai = ai_instances[model_id]
+        current_model_id = model_id
+        print(f"✅  Switched to {model_config['name']}")
+        return True, None
+    
     try:
-        # Use local model if it exists (for development)
-        if os.path.exists(LOCAL_MODEL_PATH):
-            model_file = LOCAL_MODEL_PATH
-            print("📁 Using local model")
-        # Download from Google Drive if model doesn't exist
-        elif not os.path.exists(MODEL_PATH):
-            print(f"📥 Downloading model from Google Drive (ID: {GOOGLE_DRIVE_FILE_ID})...")
-            os.makedirs(os.path.dirname(MODEL_PATH) or '.', exist_ok=True)
-            gdown.download(f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}", MODEL_PATH, quiet=False)
-            model_file = MODEL_PATH
-            print("✅ Model downloaded successfully")
-        else:
-            model_file = MODEL_PATH
-            print("📁 Using cached model")
+        # Check if model file exists
+        if not os.path.exists(model_path):
+            # Try to download if URL is provided
+            if model_config.get("download_url"):
+                print(f"📥 Downloading {model_config['name']} model...")
+                os.makedirs(os.path.dirname(model_path) or '.', exist_ok=True)
+                if "drive.google.com" in model_config["download_url"]:
+                    # Extract file ID from Google Drive URL
+                    file_id = model_config["download_url"].split("/d/")[1].split("/")[0] if "/d/" in model_config["download_url"] else ""
+                    if file_id:
+                        gdown.download(f"https://drive.google.com/uc?id={file_id}", model_path, quiet=False)
+                else:
+                    import urllib.request
+                    urllib.request.urlretrieve(model_config["download_url"], model_path)
+                print(f"✅  {model_config['name']} model downloaded")
+            else:
+                # Fallback to main model
+                if os.path.exists(LOCAL_MODEL_PATH):
+                    model_path = LOCAL_MODEL_PATH
+                    print(f"📁  Using Hyperpixel model as fallback for {model_config['name']}")
+                else:
+                    return False, f"Model file not found: {model_path}"
         
         from llama_cpp import Llama
-        ai = Llama(
-            model_path=model_file,
-            n_ctx=4096,
+        ai_instances[model_id] = Llama(
+            model_path=model_path,
+            n_ctx=model_config["context_length"],
             n_gpu_layers=0,  # No GPU on Render free tier
             verbose=False,
         )
-        print("✅  Hyperpixel AI model loaded")
+        ai = ai_instances[model_id]
+        current_model_id = model_id
+        print(f"✅  {model_config['name']} model loaded")
+        return True, None
+        
+    except Exception as e:
+        model_error = str(e)
+        print(f"❌  {model_config['name']} model load failed: {e}")
+        return False, str(e)
+
+def load_default_model():
+    """Load the default model (hyperpixel)"""
+    global ai, model_error
+    try:
+        # Try to load hyperpixel first
+        if os.path.exists(LOCAL_MODEL_PATH):
+            success, error = load_model_by_id("hyperpixel")
+            if success:
+                return
+        
+        # If local model not found, try Google Drive
+        if not os.path.exists(MODEL_PATH):
+            print(f"📥 Downloading model from Google Drive (ID: {GOOGLE_DRIVE_FILE_ID})...")
+            os.makedirs(os.path.dirname(MODEL_PATH) or '.', exist_ok=True)
+            gdown.download(f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}", MODEL_PATH, quiet=False)
+            print("✅ Model downloaded successfully")
+        
+        # Update hyperpixel path and load it
+        AVAILABLE_MODELS["hyperpixel"]["path"] = MODEL_PATH if os.path.exists(MODEL_PATH) else LOCAL_MODEL_PATH
+        success, error = load_model_by_id("hyperpixel")
+        if not success:
+            model_error = error
+            
     except Exception as e:
         model_error = str(e)
         print(f"❌  Model load failed: {e}")
 
-# Load model in background thread
-threading.Thread(target=load_model, daemon=True).start()
+# Load default model in background
+threading.Thread(target=load_default_model, daemon=True).start()
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
@@ -82,12 +166,61 @@ def script_js():
 
 @app.route("/status")
 def status():
-  if ai:
-    return jsonify({"ready": True, "provider": "Local"})
-  elif model_error:
-    return jsonify({"ready": False, "error": model_error})
-  else:
-    return jsonify({"ready": False, "loading": True})
+    current_model = AVAILABLE_MODELS.get(current_model_id, {})
+    if ai:
+        return jsonify({
+            "ready": True, 
+            "provider": "Local",
+            "model": current_model.get("name", "Hyperpixel"),
+            "model_id": current_model_id,
+            "model_description": current_model.get("description", ""),
+            "model_size": current_model.get("size", "8B")
+        })
+    elif model_error:
+        return jsonify({"ready": False, "error": model_error})
+    else:
+        return jsonify({"ready": False, "loading": True})
+
+@app.route("/models")
+def get_models():
+    """Get list of available models"""
+    models = []
+    for model_id, config in AVAILABLE_MODELS.items():
+        models.append({
+            "id": model_id,
+            "name": config["name"],
+            "description": config["description"],
+            "size": config["size"],
+            "loaded": model_id in ai_instances
+        })
+    return jsonify({
+        "models": models,
+        "current_model": current_model_id
+    })
+
+@app.route("/switch-model", methods=["POST"])
+def switch_model():
+    """Switch to a different model"""
+    data = request.json
+    model_id = data.get("model_id")
+    
+    if not model_id:
+        return jsonify({"error": "No model_id provided"}), 400
+    
+    if model_id not in AVAILABLE_MODELS:
+        return jsonify({"error": f"Model '{model_id}' not found"}), 404
+    
+    # Try to load/switch to the requested model
+    success, error = load_model_by_id(model_id)
+    
+    if success:
+        return jsonify({
+            "success": True,
+            "message": f"Switched to {AVAILABLE_MODELS[model_id]['name']}",
+            "model": AVAILABLE_MODELS[model_id]
+        })
+    else:
+        return jsonify({"error": error}), 500
 
 @app.route("/upload", methods=["POST"])
 def upload_file():
