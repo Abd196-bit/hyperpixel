@@ -4,45 +4,53 @@ import json, os, threading, base64
 import requests
 import werkzeug
 from datetime import datetime
-import gdown
+import subprocess
+import time
 
 # ── Config ───────────────────────────────────────────────────────────────────
-GOOGLE_DRIVE_FILE_ID = os.environ.get('GOOGLE_DRIVE_FILE_ID', '1A_VXnNlamJK_aKgbq8Oco7tC82LYvwJu')
-MODEL_PATH = os.environ.get('MODEL_PATH', "/tmp/model.gguf")
-LOCAL_MODEL_PATH = "/Volumes/GODBOTY/hyperpixel/models/blobs/sha256-2bada8a7450677000f678be90653b85d364de7db25eb5ea54136ada5f3933730"
-USE_STREAMLIT = os.environ.get('USE_STREAMLIT', 'false').lower() == 'true'
+# Ollama configuration - use pen drive for model storage
+PEN_DRIVE_PATH = "/Volumes/GODBOTY"
+OLLAMA_MODELS_PATH = os.environ.get('OLLAMA_MODELS', f"{PEN_DRIVE_PATH}/ollama/models")
+OLLAMA_HOST = os.environ.get('OLLAMA_HOST', 'http://localhost:11434')
 
-# ── Model Configuration ───────────────────────────────────────────────────────
+# Ensure Ollama models directory exists
+os.makedirs(OLLAMA_MODELS_PATH, exist_ok=True)
+
+# ── Model Configuration (Ollama model names) ─────────────────────────────────
 AVAILABLE_MODELS = {
     "hyperpixel": {
         "name": "Hyperpixel",
-        "description": "Main 8B parameter model - best for complex tasks",
-        "path": LOCAL_MODEL_PATH if os.path.exists(LOCAL_MODEL_PATH) else MODEL_PATH,
+        "description": "Llama 3.1 8B - best for complex tasks",
+        "ollama_name": "llama3.1:8b",
         "context_length": 4096,
         "size": "8B"
     },
     "minipixel": {
         "name": "Minipixel",
-        "description": "Fast 2B parameter model - quick responses",
-        "path": os.environ.get('MINIPIXEL_PATH', "/tmp/minipixel.gguf"),
-        "download_url": os.environ.get('MINIPIXEL_URL', ""),
+        "description": "Phi-3 Mini 2B - fast responses",
+        "ollama_name": "phi3:mini",
         "context_length": 4096,
         "size": "2B"
     },
     "minipixel2": {
         "name": "Minipixel2",
-        "description": "Balanced 3B parameter model - good for most tasks",
-        "path": os.environ.get('MINIPIXEL2_PATH', "/tmp/minipixel2.gguf"),
-        "download_url": os.environ.get('MINIPIXEL2_URL', ""),
+        "description": "Gemma 2 2B - balanced performance",
+        "ollama_name": "gemma2:2b",
+        "context_length": 4096,
+        "size": "2B"
+    },
+    "minipixel3": {
+        "name": "Minipixel3",
+        "description": "Llama 3.2 3B - good for most tasks",
+        "ollama_name": "llama3.2:3b",
         "context_length": 4096,
         "size": "3B"
     }
 }
 
 current_model_id = "hyperpixel"
-ai_instances = {}
-ai = None
 model_error = None
+ollama_ready = False
 SYSTEM_PROMPT = """You are Hyperpixel AI, a brilliant and friendly assistant who excels at coding, analysis, and conversation. Be concise, warm, and helpful. You were created by bilta studios.
 
 CRITICAL INSTRUCTIONS:
@@ -62,94 +70,131 @@ HTML_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=HTML_DIR)
 CORS(app)
 
-# ── Model Management ───────────────────────────────────────────────────────────
+# ── Ollama Management ─────────────────────────────────────────────────────────
+def check_ollama_running():
+    """Check if Ollama server is running"""
+    try:
+        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        return response.status_code == 200
+    except:
+        return False
+
+def start_ollama_server():
+    """Start Ollama server with pen drive as model storage"""
+    global ollama_ready
+    
+    # Set environment variable for Ollama models path
+    env = os.environ.copy()
+    env['OLLAMA_MODELS'] = OLLAMA_MODELS_PATH
+    
+    try:
+        # Check if Ollama is already running
+        if check_ollama_running():
+            print("✅  Ollama server already running")
+            ollama_ready = True
+            return True
+        
+        print("🚀  Starting Ollama server...")
+        print(f"📁  Models stored at: {OLLAMA_MODELS_PATH}")
+        
+        # Start Ollama in background
+        subprocess.Popen(
+            ['ollama', 'serve'],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        
+        # Wait for Ollama to start
+        for i in range(30):  # Wait up to 30 seconds
+            time.sleep(1)
+            if check_ollama_running():
+                print("✅  Ollama server started")
+                ollama_ready = True
+                return True
+        
+        print("❌  Ollama server failed to start")
+        return False
+        
+    except Exception as e:
+        print(f"❌  Error starting Ollama: {e}")
+        return False
+
+def pull_ollama_model(model_name):
+    """Pull a model from Ollama registry"""
+    try:
+        print(f"📥  Pulling model: {model_name}")
+        response = requests.post(
+            f"{OLLAMA_HOST}/api/pull",
+            json={"name": model_name, "stream": False},
+            timeout=300
+        )
+        if response.status_code == 200:
+            print(f"✅  Model {model_name} ready")
+            return True
+        else:
+            print(f"❌  Failed to pull {model_name}: {response.text}")
+            return False
+    except Exception as e:
+        print(f"❌  Error pulling {model_name}: {e}")
+        return False
+
+def check_model_available(ollama_name):
+    """Check if a model is available locally"""
+    try:
+        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        if response.status_code == 200:
+            models = response.json().get('models', [])
+            return any(m['name'] == ollama_name for m in models)
+    except:
+        pass
+    return False
+
 def load_model_by_id(model_id):
-    """Load a specific model by ID"""
-    global ai, model_error, current_model_id
+    """Switch to a specific model"""
+    global model_error, current_model_id
     
     if model_id not in AVAILABLE_MODELS:
         return False, f"Model '{model_id}' not found"
     
-    model_config = AVAILABLE_MODELS[model_id]
-    model_path = model_config["path"]
+    if not ollama_ready:
+        return False, "Ollama server not ready"
     
-    # If model already loaded, return success
-    if model_id in ai_instances:
-        ai = ai_instances[model_id]
-        current_model_id = model_id
-        print(f"✅  Switched to {model_config['name']}")
-        return True, None
+    model_config = AVAILABLE_MODELS[model_id]
+    ollama_name = model_config["ollama_name"]
     
     try:
-        # Check if model file exists
-        if not os.path.exists(model_path):
-            # Try to download if URL is provided
-            if model_config.get("download_url"):
-                print(f"📥 Downloading {model_config['name']} model...")
-                os.makedirs(os.path.dirname(model_path) or '.', exist_ok=True)
-                if "drive.google.com" in model_config["download_url"]:
-                    # Extract file ID from Google Drive URL
-                    file_id = model_config["download_url"].split("/d/")[1].split("/")[0] if "/d/" in model_config["download_url"] else ""
-                    if file_id:
-                        gdown.download(f"https://drive.google.com/uc?id={file_id}", model_path, quiet=False)
-                else:
-                    import urllib.request
-                    urllib.request.urlretrieve(model_config["download_url"], model_path)
-                print(f"✅  {model_config['name']} model downloaded")
-            else:
-                # Fallback to main model
-                if os.path.exists(LOCAL_MODEL_PATH):
-                    model_path = LOCAL_MODEL_PATH
-                    print(f"📁  Using Hyperpixel model as fallback for {model_config['name']}")
-                else:
-                    return False, f"Model file not found: {model_path}"
+        # Check if model is available, pull if not
+        if not check_model_available(ollama_name):
+            success = pull_ollama_model(ollama_name)
+            if not success:
+                return False, f"Failed to pull model {ollama_name}"
         
-        from llama_cpp import Llama
-        ai_instances[model_id] = Llama(
-            model_path=model_path,
-            n_ctx=model_config["context_length"],
-            n_gpu_layers=0,  # No GPU on Render free tier
-            verbose=False,
-        )
-        ai = ai_instances[model_id]
         current_model_id = model_id
-        print(f"✅  {model_config['name']} model loaded")
+        print(f"✅  Switched to {model_config['name']} ({ollama_name})")
         return True, None
         
     except Exception as e:
         model_error = str(e)
-        print(f"❌  {model_config['name']} model load failed: {e}")
+        print(f"❌  Error switching to {model_id}: {e}")
         return False, str(e)
 
-def load_default_model():
-    """Load the default model (hyperpixel)"""
-    global ai, model_error
-    try:
-        # Try to load hyperpixel first
-        if os.path.exists(LOCAL_MODEL_PATH):
-            success, error = load_model_by_id("hyperpixel")
-            if success:
-                return
-        
-        # If local model not found, try Google Drive
-        if not os.path.exists(MODEL_PATH):
-            print(f"📥 Downloading model from Google Drive (ID: {GOOGLE_DRIVE_FILE_ID})...")
-            os.makedirs(os.path.dirname(MODEL_PATH) or '.', exist_ok=True)
-            gdown.download(f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}", MODEL_PATH, quiet=False)
-            print("✅ Model downloaded successfully")
-        
-        # Update hyperpixel path and load it
-        AVAILABLE_MODELS["hyperpixel"]["path"] = MODEL_PATH if os.path.exists(MODEL_PATH) else LOCAL_MODEL_PATH
-        success, error = load_model_by_id("hyperpixel")
-        if not success:
-            model_error = error
-            
-    except Exception as e:
-        model_error = str(e)
-        print(f"❌  Model load failed: {e}")
+def init_ollama():
+    """Initialize Ollama and load default model"""
+    global model_error
+    
+    # Start Ollama server
+    if not start_ollama_server():
+        model_error = "Failed to start Ollama server"
+        return
+    
+    # Load default model
+    success, error = load_model_by_id("hyperpixel")
+    if not success:
+        model_error = error
 
-# Load default model in background
-threading.Thread(target=load_default_model, daemon=True).start()
+# Initialize Ollama in background
+threading.Thread(target=init_ollama, daemon=True).start()
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 @app.route("/")
@@ -341,9 +386,9 @@ def chat():
         return Response(generate_image_response(), mimetype="text/event-stream",
                         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    # Use local model for text response
-    if not ai:
-        return jsonify({"error": "Model not loaded yet"}), 503
+    # Use Ollama for text response
+    if not ollama_ready:
+        return jsonify({"error": "Ollama not ready yet"}), 503
 
     # Always perform a web search for the latest user message
     user_query = ""
@@ -390,17 +435,39 @@ def chat():
             if context_parts:
                 system_messages[0]["content"] += "\n\n" + "\n\n".join(context_parts)
 
-            response = ai.create_chat_completion(
-                messages=system_messages + messages,
+            # Get current Ollama model name
+            model_config = AVAILABLE_MODELS.get(current_model_id, AVAILABLE_MODELS["hyperpixel"])
+            ollama_model = model_config["ollama_name"]
+
+            # Call Ollama API with streaming
+            ollama_response = requests.post(
+                f"{OLLAMA_HOST}/api/chat",
+                json={
+                    "model": ollama_model,
+                    "messages": system_messages + messages,
+                    "stream": True,
+                    "options": {
+                        "temperature": 0.7,
+                        "num_predict": 1024
+                    }
+                },
                 stream=True,
-                temperature=0.7,
-                max_tokens=1024,
+                timeout=300
             )
-            for chunk in response:
-                delta = chunk["choices"][0]["delta"]
-                text = delta.get("content", "")
-                if text:
-                    yield f"data: {json.dumps({'text': text})}\n\n"
+
+            for line in ollama_response.iter_lines():
+                if line:
+                    try:
+                        chunk = json.loads(line)
+                        if "message" in chunk and "content" in chunk["message"]:
+                            text = chunk["message"]["content"]
+                            if text:
+                                yield f"data: {json.dumps({'text': text})}\n\n"
+                        if chunk.get("done", False):
+                            break
+                    except json.JSONDecodeError:
+                        continue
+
             yield "data: [DONE]\n\n"
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e)})}\n\n"
