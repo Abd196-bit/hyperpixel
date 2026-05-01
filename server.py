@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, Response, send_from_directory
 from flask_cors import CORS
-import json, os, threading
+import json, os, threading, base64
 import requests
 import werkzeug
 from datetime import datetime
@@ -421,6 +421,44 @@ def format_file_content(files):
         formatted += f"Content:\n{file_info['content']}\n\n"
 
     return formatted
+
+@app.route('/generate-image', methods=['POST'])
+def generate_image():
+    """Generate image using Pollinations AI"""
+    try:
+        data = request.json
+        prompt = data.get('prompt', '')
+        width = data.get('width', 1024)
+        height = data.get('height', 1024)
+        seed = data.get('seed', None)
+        
+        if not prompt:
+            return jsonify({"error": "No prompt provided"}), 400
+        
+        # Build Pollinations URL
+        encoded_prompt = requests.utils.quote(prompt)
+        image_url = f"https://image.pollinations.ai/prompt/{encoded_prompt}?width={width}&height={height}&nologo=true"
+        if seed:
+            image_url += f"&seed={seed}"
+        
+        # Download the image
+        response = requests.get(image_url, timeout=60)
+        response.raise_for_status()
+        
+        # Return the image as base64 or direct URL
+        image_base64 = base64.b64encode(response.content).decode('utf-8')
+        
+        return jsonify({
+            "success": True,
+            "image_url": image_url,
+            "image_data": f"data:image/png;base64,{image_base64}",
+            "prompt": prompt,
+            "width": width,
+            "height": height
+        })
+        
+    except Exception as e:
+        return jsonify({"error": f"Image generation failed: {str(e)}"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get('PORT', 5500))

@@ -720,6 +720,71 @@ async function sendMessage() {
   input.focus();
 }
 
+// ── Image Generation ──────────────────────────────────────────────────────
+async function generateImage() {
+  const text = input.value.trim();
+  if (!text) {
+    showToast("Enter a prompt to generate an image");
+    return;
+  }
+
+  // Hide welcome
+  const welcome = document.getElementById("welcome");
+  if (welcome) welcome.remove();
+
+  input.value = "";
+  input.style.height = "auto";
+  isStreaming = true;
+  document.getElementById("send-btn").disabled = true;
+  document.getElementById("image-btn").disabled = true;
+
+  // Add user message
+  const userText = `Generate image: ${text}`;
+  history.push({ role: "user", content: userText });
+  currentChat.messages.push({ role: "user", content: userText });
+  appendUserBubble(userText);
+
+  // AI bubble with loading indicator
+  const { row, content } = appendAIBubble("Generating image...");
+  document.getElementById("topbar-status").textContent = "Generating image...";
+
+  try {
+    const response = await fetch("/generate-image", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: text, width: 1024, height: 1024 }),
+    });
+
+    const data = await response.json();
+
+    if (data.error) {
+      throw new Error(data.error);
+    }
+
+    // Display the generated image
+    content.innerHTML = `<div style="margin-bottom: 8px;">Here's your generated image:</div>
+      <img src="${data.image_data}" alt="Generated image" style="max-width: 100%; border-radius: 8px; border: 1px solid var(--border);" />
+      <div style="margin-top: 8px; font-size: 12px; color: var(--text-dim);">Prompt: ${escapeHtml(data.prompt)}</div>`;
+
+    history.push({ role: "assistant", content: `[Generated image: ${data.prompt}]` });
+    currentChat.messages.push({ role: "assistant", content: `[Generated image: ${data.prompt}]` });
+    document.getElementById("topbar-status").textContent = "Image ready";
+
+    if (currentUser) {
+      await saveChatToDatabase();
+    }
+
+  } catch (err) {
+    content.textContent = "Error generating image: " + err.message;
+    document.getElementById("topbar-status").textContent = "Error";
+  }
+
+  isStreaming = false;
+  document.getElementById("send-btn").disabled = false;
+  document.getElementById("image-btn").disabled = false;
+  input.focus();
+}
+
 // ── DOM helpers ───────────────────────────────────────────────────────────
 function appendUserBubble(text) {
   const msgs = document.getElementById("messages");
