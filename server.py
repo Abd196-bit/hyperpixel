@@ -212,7 +212,7 @@ def script_js():
 @app.route("/status")
 def status():
     current_model = AVAILABLE_MODELS.get(current_model_id, {})
-    if ai:
+    if ollama_ready:
         return jsonify({
             "ready": True, 
             "provider": "Local",
