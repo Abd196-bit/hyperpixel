@@ -236,7 +236,7 @@ def get_models():
             "name": config["name"],
             "description": config["description"],
             "size": config["size"],
-            "loaded": model_id in ai_instances
+            "loaded": ollama_ready and model_id == current_model_id
         })
     return jsonify({
         "models": models,
