@@ -228,16 +228,30 @@ def status():
 
 @app.route("/models")
 def get_models():
-    """Get list of available models"""
+    """Get list of available models that are actually downloaded"""
     models = []
+    
+    # Get list of models actually available in Ollama
+    try:
+        response = requests.get(f"{OLLAMA_HOST}/api/tags", timeout=5)
+        if response.status_code == 200:
+            ollama_models = {m["name"] for m in response.json().get("models", [])}
+        else:
+            ollama_models = set()
+    except:
+        ollama_models = set()
+    
     for model_id, config in AVAILABLE_MODELS.items():
-        models.append({
-            "id": model_id,
-            "name": config["name"],
-            "description": config["description"],
-            "size": config["size"],
-            "loaded": ollama_ready and model_id == current_model_id
-        })
+        # Only show if the Ollama model is actually downloaded
+        if config["ollama_name"] in ollama_models:
+            models.append({
+                "id": model_id,
+                "name": config["name"],
+                "description": config["description"],
+                "size": config["size"],
+                "loaded": model_id == current_model_id
+            })
+    
     return jsonify({
         "models": models,
         "current_model": current_model_id
